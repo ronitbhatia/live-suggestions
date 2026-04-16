@@ -20,6 +20,8 @@ function publicSettings(s: AppSettings): Omit<AppSettings, "groqApiKey"> {
   return rest;
 }
 
+const TRANSCRIPT_CHUNK_MS = 30_000;
+
 function kindLabel(kind: SuggestionCard["kind"]): string {
   switch (kind) {
     case "question_to_ask":
@@ -54,6 +56,13 @@ export function TwinMindApp() {
   const [countdown, setCountdown] = useState(30);
   const countdownRef = useRef<number | null>(null);
 
+  const [nextChunkDeadlineMs, setNextChunkDeadlineMs] = useState<number | null>(null);
+  const [chunkUi, setChunkUi] = useState<{
+    label: string;
+    sec: number;
+    pct: number;
+  } | null>(null);
+
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
@@ -87,6 +96,35 @@ export function TwinMindApp() {
   useEffect(() => {
     transcriptTextRef.current = transcriptLines.map((l) => l.text).join("\n");
   }, [transcriptLines]);
+
+  const scheduleNextChunkWindow = useCallback(() => {
+    setNextChunkDeadlineMs(Date.now() + TRANSCRIPT_CHUNK_MS);
+  }, []);
+
+  useEffect(() => {
+    if (!isRecording || nextChunkDeadlineMs == null) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- clear UI when mic stops or before first deadline
+      setChunkUi(null);
+      return;
+    }
+    const deadline = nextChunkDeadlineMs;
+    const tick = () => {
+      const msLeft = Math.max(0, deadline - Date.now());
+      const sec = Math.max(1, Math.ceil(msLeft / 1000));
+      const pct = Math.min(
+        100,
+        Math.max(0, ((TRANSCRIPT_CHUNK_MS - msLeft) / TRANSCRIPT_CHUNK_MS) * 100),
+      );
+      setChunkUi({
+        label: `Next transcript chunk in ~${sec}s`,
+        sec,
+        pct,
+      });
+    };
+    tick();
+    const id = window.setInterval(tick, 250);
+    return () => window.clearInterval(id);
+  }, [isRecording, nextChunkDeadlineMs]);
 
   const stopCountdown = useCallback(() => {
     if (countdownRef.current) {
@@ -207,6 +245,7 @@ export function TwinMindApp() {
     mediaRecorderRef.current = recorder;
 
     recorder.addEventListener("dataavailable", async (ev: BlobEvent) => {
+      scheduleNextChunkWindow();
       if (!ev.data || ev.data.size === 0) {
         await fetchSuggestions();
         return;
@@ -216,7 +255,8 @@ export function TwinMindApp() {
     });
 
     recorder.start(30_000);
-  }, [fetchSuggestions, transcribeBlob]);
+    scheduleNextChunkWindow();
+  }, [fetchSuggestions, scheduleNextChunkWindow, transcribeBlob]);
 
   const startMic = useCallback(async () => {
     if (mediaRecorderRef.current) return;
@@ -240,6 +280,7 @@ export function TwinMindApp() {
     mediaRecorderRef.current = null;
     mediaStreamRef.current?.getTracks().forEach((t) => t.stop());
     mediaStreamRef.current = null;
+    setNextChunkDeadlineMs(null);
     setIsRecording(false);
     setMicStatus("idle");
     stopCountdown();
@@ -441,6 +482,33 @@ export function TwinMindApp() {
                 Click mic to start. Transcript appends every ~30s while recording.
               </p>
             </div>
+            {isRecording && (
+              <div className="rounded-lg border border-zinc-700 bg-[#0f1115] px-3 py-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className="relative flex h-2 w-2 shrink-0">
+                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#4a90e2] opacity-55" />
+                      <span className="relative inline-flex h-2 w-2 rounded-full bg-[#4a90e2]" />
+                    </span>
+                    <p className="truncate text-xs font-medium text-zinc-200">
+                      {chunkUi?.label ?? "Starting chunk timer…"}
+                    </p>
+                  </div>
+                  <span className="shrink-0 text-xs tabular-nums text-[#4a90e2]">
+                    {chunkUi?.sec ?? 30}s
+                  </span>
+                </div>
+                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-zinc-800">
+                  <div
+                    className="h-full rounded-full bg-[#4a90e2] transition-[width] duration-200 ease-linear"
+                    style={{ width: `${chunkUi?.pct ?? 0}%` }}
+                  />
+                </div>
+                {busy === "transcribe" && (
+                  <p className="mt-2 text-[11px] text-zinc-500">Sending latest audio to Whisper…</p>
+                )}
+              </div>
+            )}
             <div className="rounded-lg border border-[#4a90e2]/50 bg-[#1a1d23] p-3 text-xs leading-relaxed text-sky-200/90">
               Chunks flush on a ~30s cadence and auto-scroll. Use{" "}
               <span className="font-semibold text-sky-100">Export session</span> in the header
