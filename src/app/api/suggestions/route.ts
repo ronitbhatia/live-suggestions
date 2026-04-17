@@ -17,6 +17,13 @@ const KINDS = new Set([
   "fact_check",
   "clarify",
 ]);
+const KIND_ROTATION: SuggestionCard["kind"][] = [
+  "question_to_ask",
+  "talking_point",
+  "fact_check",
+  "clarify",
+  "answer",
+];
 
 function normalizeSuggestions(raw: unknown): SuggestionCard[] {
   if (!raw || typeof raw !== "object") return [];
@@ -38,6 +45,85 @@ function normalizeSuggestions(raw: unknown): SuggestionCard[] {
     });
   }
   return out;
+}
+
+function fallbackSuggestion(transcript: string, idx: number): SuggestionCard {
+  const topic = transcript.split(/\s+/).slice(0, 12).join(" ").trim() || "the current discussion";
+  const kind = KIND_ROTATION[idx % KIND_ROTATION.length];
+  if (kind === "question_to_ask") {
+    return {
+      kind,
+      preview: `Clarify priority and owner for ${topic}.`,
+      detailSeed: `Draft 2 concise follow-up questions to clarify priority and ownership for: ${topic}.`,
+    };
+  }
+  if (kind === "talking_point") {
+    return {
+      kind,
+      preview: `Summarize one concrete next step tied to ${topic}.`,
+      detailSeed: `Provide a short talking point with next step, owner, and timing for: ${topic}.`,
+    };
+  }
+  if (kind === "fact_check") {
+    return {
+      kind,
+      preview: `Verify assumptions or metrics mentioned around ${topic}.`,
+      detailSeed: `List what should be validated and which source to check for: ${topic}.`,
+    };
+  }
+  if (kind === "clarify") {
+    return {
+      kind,
+      preview: `Define ambiguous terms or scope in ${topic}.`,
+      detailSeed: `Explain likely ambiguities and propose exact clarifying language for: ${topic}.`,
+    };
+  }
+  return {
+    kind: "answer",
+    preview: `Offer a concise answer draft based on what was said about ${topic}.`,
+    detailSeed: `Draft a concise response grounded in transcript context for: ${topic}.`,
+  };
+}
+
+function ensureExactlyThree(
+  suggestions: SuggestionCard[],
+  transcript: string,
+): SuggestionCard[] {
+  const deduped = suggestions.filter((s, i, arr) => {
+    const key = `${s.kind}:${s.preview.toLowerCase()}`;
+    return arr.findIndex((x) => `${x.kind}:${x.preview.toLowerCase()}` === key) === i;
+  });
+
+  if (deduped.length > 3) return deduped.slice(0, 3);
+  if (deduped.length === 3) return deduped;
+
+  const padded = [...deduped];
+  for (let i = padded.length; i < 3; i += 1) {
+    padded.push(fallbackSuggestion(transcript, i));
+  }
+  return padded;
+}
+
+async function generateSuggestions(args: {
+  apiKey: string;
+  model: string;
+  system: string;
+  user: string;
+  temperature: number;
+  maxTokens: number;
+}): Promise<SuggestionCard[]> {
+  const jsonText = await groqChatCompletionJson({
+    apiKey: args.apiKey,
+    model: args.model,
+    temperature: args.temperature,
+    maxTokens: args.maxTokens,
+    messages: [
+      { role: "system", content: args.system },
+      { role: "user", content: args.user },
+    ],
+  });
+  const parsed = JSON.parse(jsonText) as unknown;
+  return normalizeSuggestions(parsed);
 }
 
 export async function POST(request: Request) {
@@ -83,36 +169,39 @@ export async function POST(request: Request) {
   const user = userTpl.replaceAll("{{TRANSCRIPT}}", transcript);
 
   try {
-    const jsonText = await groqChatCompletionJson({
-      apiKey,
-      model,
-      temperature: settings.suggestionTemperature ?? 0.55,
-      maxTokens: settings.suggestionMaxTokens ?? 700,
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: user },
-      ],
-    });
+    const temperature = settings.suggestionTemperature ?? 0.55;
+    const maxTokens = settings.suggestionMaxTokens ?? 700;
 
-    let parsed: unknown;
+    let suggestions: SuggestionCard[] = [];
     try {
-      parsed = JSON.parse(jsonText);
-    } catch {
-      return new Response(JSON.stringify({ error: "Model returned non-JSON" }), {
-        status: 502,
-        headers: { "Content-Type": "application/json" },
+      suggestions = await generateSuggestions({
+        apiKey,
+        model,
+        system,
+        user,
+        temperature,
+        maxTokens,
       });
+    } catch {
+      // Retry once with stronger determinism and explicit count requirement.
+      const retrySystem =
+        `${system}\n\nCRITICAL: Return exactly 3 suggestions. Never return fewer or more.`;
+      const retryUser = `${user}\n\nReturn exactly 3 suggestions.`;
+      try {
+        suggestions = await generateSuggestions({
+          apiKey,
+          model,
+          system: retrySystem,
+          user: retryUser,
+          temperature: Math.max(0, temperature - 0.2),
+          maxTokens,
+        });
+      } catch {
+        // Fall through to resilient fallback path below.
+      }
     }
 
-    const suggestions = normalizeSuggestions(parsed);
-    if (suggestions.length !== 3) {
-      return new Response(
-        JSON.stringify({
-          error: `Expected exactly 3 suggestions, got ${suggestions.length}`,
-        }),
-        { status: 502, headers: { "Content-Type": "application/json" } },
-      );
-    }
+    suggestions = ensureExactlyThree(suggestions, transcript);
 
     const batch: SuggestionBatch = {
       id: crypto.randomUUID(),

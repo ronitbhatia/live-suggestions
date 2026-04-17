@@ -67,6 +67,9 @@ export function TwinMindApp() {
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
   const transcriptTextRef = useRef("");
+  const transcriptSectionRef = useRef<HTMLElement | null>(null);
+  const suggestionsSectionRef = useRef<HTMLElement | null>(null);
+  const chatSectionRef = useRef<HTMLElement | null>(null);
 
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
 
@@ -419,11 +422,31 @@ export function TwinMindApp() {
     URL.revokeObjectURL(url);
   }, [batches, chatMessages, transcriptLines]);
 
+  const clearSession = useCallback(() => {
+    stopMic();
+    setTranscriptLines([]);
+    setBatches([]);
+    setChatMessages([]);
+    setBanner(null);
+    setDraft("");
+    transcriptTextRef.current = "";
+  }, [stopMic]);
+
+  const jumpToSection = useCallback((section: "transcript" | "suggestions" | "chat") => {
+    const target =
+      section === "transcript"
+        ? transcriptSectionRef.current
+        : section === "suggestions"
+          ? suggestionsSectionRef.current
+          : chatSectionRef.current;
+    target?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, []);
+
   return (
     <div className="flex min-h-screen flex-col bg-[#0f1115] text-zinc-100">
-      <header className="flex items-center justify-between border-b border-zinc-800 px-5 py-3">
+      <header className="sticky top-0 z-20 flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800 bg-[#0f1115]/95 px-4 py-3 backdrop-blur md:px-5">
         <div className="flex items-center gap-3">
-          <span className="text-sm font-semibold tracking-wide text-zinc-200">
+          <span className="text-sm font-semibold tracking-wide text-zinc-200 md:text-base">
             TwinMind
           </span>
           <span className="rounded-full border border-zinc-700 px-2 py-0.5 text-[11px] uppercase text-zinc-400">
@@ -431,6 +454,34 @@ export function TwinMindApp() {
           </span>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => jumpToSection("transcript")}
+            className="rounded-full border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 hover:border-zinc-500"
+          >
+            Transcript
+          </button>
+          <button
+            type="button"
+            onClick={() => jumpToSection("suggestions")}
+            className="rounded-full border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 hover:border-zinc-500"
+          >
+            Suggestions
+          </button>
+          <button
+            type="button"
+            onClick={() => jumpToSection("chat")}
+            className="rounded-full border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 hover:border-zinc-500"
+          >
+            Chat
+          </button>
+          <button
+            type="button"
+            onClick={clearSession}
+            className="rounded-full border border-zinc-600 px-3 py-1.5 text-xs text-zinc-200 hover:border-red-500 hover:text-red-200"
+          >
+            New session
+          </button>
           <button
             type="button"
             onClick={exportSession}
@@ -453,9 +504,19 @@ export function TwinMindApp() {
         </div>
       )}
 
+      <div className="grid grid-cols-2 gap-2 border-b border-zinc-800 bg-[#11141a] px-4 py-2 text-[11px] uppercase tracking-wide text-zinc-400 md:flex md:items-center md:gap-6 md:px-5">
+        <span>{isRecording ? "Mic: Live" : "Mic: Idle"}</span>
+        <span>{busy ? `Status: ${busy}` : "Status: Ready"}</span>
+        <span>{transcriptLines.length} transcript chunk{transcriptLines.length === 1 ? "" : "s"}</span>
+        <span>{chatMessages.length} chat message{chatMessages.length === 1 ? "" : "s"}</span>
+      </div>
+
       <main className="grid flex-1 grid-cols-1 divide-y divide-zinc-800 lg:grid-cols-3 lg:divide-x lg:divide-y-0">
         {/* Column 1 */}
-        <section className="flex min-h-[420px] flex-col bg-[#14161c] lg:min-h-0">
+        <section
+          ref={transcriptSectionRef}
+          className="flex min-h-[420px] flex-col bg-[#14161c] lg:min-h-0"
+        >
           <div className="flex items-center justify-between border-b border-zinc-800 px-4 py-3">
             <h2 className="text-xs font-semibold tracking-wide text-zinc-300">
               1. MIC &amp; TRANSCRIPT
@@ -518,7 +579,16 @@ export function TwinMindApp() {
           <div className="flex min-h-0 flex-1 flex-col px-2 pb-4">
             <div className="mx-2 flex min-h-0 flex-1 flex-col overflow-y-auto rounded-lg border border-zinc-800 bg-[#0f1115] p-3">
               {transcriptLines.length === 0 ? (
-                <p className="text-sm text-zinc-500">No transcript yet — start the mic.</p>
+                <div className="space-y-2 text-sm text-zinc-500">
+                  <p>No transcript yet — start the mic.</p>
+                  <button
+                    type="button"
+                    onClick={() => void startMic()}
+                    className="rounded-md border border-zinc-700 px-2 py-1 text-xs text-zinc-300 hover:border-[#4a90e2] hover:text-zinc-100"
+                  >
+                    Start microphone
+                  </button>
+                </div>
               ) : (
                 <ul className="space-y-3 text-sm text-zinc-200">
                   {transcriptLines.map((line) => (
@@ -540,7 +610,10 @@ export function TwinMindApp() {
         </section>
 
         {/* Column 2 */}
-        <section className="flex min-h-[420px] flex-col bg-[#14161c] lg:min-h-0">
+        <section
+          ref={suggestionsSectionRef}
+          className="flex min-h-[420px] flex-col bg-[#14161c] lg:min-h-0"
+        >
           <div className="flex items-center justify-between border-b border-zinc-800 px-4 py-3">
             <h2 className="text-xs font-semibold tracking-wide text-zinc-300">
               2. LIVE SUGGESTIONS
@@ -572,10 +645,19 @@ export function TwinMindApp() {
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto px-2 py-3">
             {batches.length === 0 ? (
-              <p className="px-2 text-sm text-zinc-500">
-                Suggestions appear here after the first successful refresh (mic chunk or manual
-                reload).
-              </p>
+              <div className="space-y-2 px-2 text-sm text-zinc-500">
+                <p>
+                  Suggestions appear here after the first successful refresh (mic chunk or manual
+                  reload).
+                </p>
+                <button
+                  type="button"
+                  onClick={() => void refreshAll()}
+                  className="rounded-md border border-zinc-700 px-2 py-1 text-xs text-zinc-300 hover:border-[#4a90e2] hover:text-zinc-100"
+                >
+                  Refresh now
+                </button>
+              </div>
             ) : (
               <div className="space-y-6 px-2">
                 {batches.map((batch, batchIndex) => {
@@ -615,7 +697,10 @@ export function TwinMindApp() {
         </section>
 
         {/* Column 3 */}
-        <section className="flex min-h-[480px] flex-col bg-[#14161c] lg:min-h-0">
+        <section
+          ref={chatSectionRef}
+          className="flex min-h-[480px] flex-col bg-[#14161c] lg:min-h-0"
+        >
           <div className="flex items-center justify-between border-b border-zinc-800 px-4 py-3">
             <h2 className="text-xs font-semibold tracking-wide text-zinc-300">
               3. CHAT (DETAILED ANSWERS)
@@ -631,7 +716,12 @@ export function TwinMindApp() {
             className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-4"
           >
             {chatMessages.length === 0 ? (
-              <p className="text-sm text-zinc-500">Click a suggestion or type a question below.</p>
+              <div className="space-y-2 text-sm text-zinc-500">
+                <p>Click a suggestion or type a question below.</p>
+                <p className="text-xs text-zinc-600">
+                  Tip: press Enter to send quickly during a live conversation.
+                </p>
+              </div>
             ) : (
               chatMessages.map((m) => (
                 <div

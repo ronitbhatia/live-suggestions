@@ -2,11 +2,13 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import type { AppSettings } from "@/lib/types";
 import { defaultSettings } from "@/lib/defaults";
 import { loadSettings, saveSettings } from "@/lib/settings-storage";
 
 export default function SettingsPage() {
+  const router = useRouter();
   const [settings, setSettings] = useState<AppSettings>(defaultSettings);
   const [saved, setSaved] = useState(false);
 
@@ -23,7 +25,11 @@ export default function SettingsPage() {
   const onSave = () => {
     saveSettings(settings);
     setSaved(true);
-    window.setTimeout(() => setSaved(false), 2000);
+    // Quick confirmation feedback, then return user to the main app.
+    window.setTimeout(() => {
+      setSaved(false);
+      router.push("/");
+    }, 300);
   };
 
   const onResetPrompts = () => {
