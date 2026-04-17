@@ -1,5 +1,7 @@
 # TwinMind — Live Suggestions (assignment build)
 
+Live app: https://live-suggestions-phi.vercel.app/
+
 Always-on meeting copilot UI: **mic + rolling transcript** (left), **three live suggestions per refresh** (middle), **streamed detailed chat** (right). Session-only: nothing is persisted server-side; reloading clears state. Your **Groq API key** and prompt edits live in **localStorage** via the Settings screen.
 
 ## Stack
